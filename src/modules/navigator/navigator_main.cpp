@@ -177,7 +177,7 @@ private:
 	class 		Mission				_mission;
 
 	bool		_mission_item_valid;		/**< current mission item valid */
-	bool		_global_pos_valid;		/**< track changes of global_position.global_valid flag */
+	bool		_global_pos_valid;		/**< track changes of global_position */
 	bool		_reset_loiter_pos;		/**< if true then loiter position should be set to current position */
 	bool		_waypoint_position_reached;
 	bool		_waypoint_yaw_reached;
@@ -692,6 +692,9 @@ Navigator::task_main()
 
 			/* evaluate state requested by commander */
 			if (_control_mode.flag_armed && _control_mode.flag_control_auto_enabled) {
+				/* publish position setpoint triplet on each status update if navigator active */
+				_pos_sp_triplet_updated = true;
+
 				if (_vstatus.set_nav_state_timestamp != _set_nav_state_timestamp) {
 					/* commander requested new navigation mode, try to set it */
 					switch (_vstatus.set_nav_state) {
@@ -730,6 +733,13 @@ Navigator::task_main()
 					/* on first switch to AUTO try mission by default, if none is available fallback to loiter */
 					if (myState == NAV_STATE_NONE) {
 						request_mission_if_available();
+					}
+				}
+
+				/* check if waypoint has been reached in MISSION, RTL and LAND modes */
+				if (myState == NAV_STATE_MISSION || myState == NAV_STATE_RTL || myState == NAV_STATE_LAND) {
+					if (check_mission_item_reached()) {
+						on_mission_item_reached();
 					}
 				}
 
@@ -777,16 +787,14 @@ Navigator::task_main()
 		if (fds[1].revents & POLLIN) {
 			global_position_update();
 
-			/* publish position setpoint triplet on each position update if navigator active */
 			if (_control_mode.flag_armed && _control_mode.flag_control_auto_enabled) {
+				/* publish position setpoint triplet on each position update if navigator active */
 				_pos_sp_triplet_updated = true;
 
-				if (myState == NAV_STATE_LAND && _global_pos.global_valid && !_global_pos_valid) {
+				if (myState == NAV_STATE_LAND && !_global_pos_valid) {
 					/* got global position when landing, update setpoint */
 					start_land();
 				}
-
-				_global_pos_valid = _global_pos.global_valid;
 
 				/* check if waypoint has been reached in MISSION, RTL and LAND modes */
 				if (myState == NAV_STATE_MISSION || myState == NAV_STATE_RTL || myState == NAV_STATE_LAND) {
@@ -811,6 +819,8 @@ Navigator::task_main()
 				_geofence_violation_warning_sent = false;
 			}
 		}
+
+		_global_pos_valid = _vstatus.condition_global_position_valid;
 
 		/* publish position setpoint triplet if updated */
 		if (_pos_sp_triplet_updated) {
@@ -857,9 +867,9 @@ Navigator::start()
 void
 Navigator::status()
 {
-	warnx("Global position is %svalid", _global_pos.global_valid ? "" : "in");
+	warnx("Global position: %svalid", _global_pos_valid ? "" : "in");
 
-	if (_global_pos.global_valid) {
+	if (_global_pos_valid) {
 		warnx("Longitude %5.5f degrees, latitude %5.5f degrees", _global_pos.lon, _global_pos.lat);
 		warnx("Altitude %5.5f meters, altitude above home %5.5f meters",
 		      (double)_global_pos.alt, (double)(_global_pos.alt - _home_pos.alt));
